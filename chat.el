@@ -136,9 +136,9 @@ FINALIZE is called when the text is over."
 (defvar chat-mode-map
   (let ((m (make-sparse-keymap)))
     (define-key m (kbd "RET") #'chat-send)
-    (define-key m (kbd "S-RET") #'newline)
+    (define-key m (kbd "C-RET") #'newline)
     (define-key m (kbd "<return>") #'chat-send)
-    (define-key m (kbd "S-<return>") #'newline)
+    (define-key m (kbd "C-<return>") #'newline)
     m)
   "The mode map for `chat-mode'.")
 
