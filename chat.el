@@ -37,10 +37,11 @@ If no key is found, error."
        "Could not get OpenAI API key. Either set `chat-api-key' or ensure that \"%s\" is set"
        chat-api-env-key)))
 
-(defun chat--async-raw (input callback)
-  "Query ChatGPT with INPUT.
+(defun chat--async-raw (messages callback finalize)
+  "Query ChatGPT with MESSAGES.
 CALLBACK is called in the receiving buffer with POINT at the
-beginning of the new data."
+beginning of the new data.
+FINALIZE is called after all data has been processed."
   (let* ((url-request-method "POST")
          (url-request-extra-headers `(("Content-Type" . "application/json")
                                       ("Authorization" . ,(concat "Bearer " (chat-get-api-key)))))
@@ -49,11 +50,7 @@ beginning of the new data."
                               ,@(when chat-max-tokens
                                   `(("max_tokens" . ,chat-max-tokens)))
                               ("stream" . t)
-                              ("messages" .
-                               ((("role" . "system")
-                                 ("content" . ,chat-system-prompt))
-                                (("role" . "user")
-                                 ("content" . ,input)))))))
+                              ("messages" . ,messages))))
          (filter (lambda (filter proc data)
                    (let ((length (funcall filter proc data))
                          (b (process-buffer proc)))
@@ -67,13 +64,18 @@ beginning of the new data."
                   (lambda (status)
                     (advice-remove #'url-http-generic-filter filter)
                     (when-let (err (plist-get status :error))
-                      (error "Failed to get response: %s" err))))))
+                      (error "Failed to get response: %s" err))
+                    (when finalize
+                      (funcall finalize))))))
 
-(defun chat--async-query (input callback)
-  "Apply CALLBACK to each data block returned from calling ChatGPT on INPUT."
+(defun chat--async-query (messages callback finalize)
+  "Apply CALLBACK to each data block returned from calling ChatGPT on MESSAGES.
+FINALIZE is called when the query finishes."
   (let ((b (current-buffer)))
     (chat--async-raw
-     input
+     (cons `(("role" . "system")
+             ("content" . ,chat-system-prompt))
+           messages)
      (lambda ()
        (while (and (search-forward "data:" nil t)
                    (not (string= " [DONE]"
@@ -84,29 +86,157 @@ beginning of the new data."
                        :array-type 'list
                        :object-type 'alist)))
            (with-current-buffer b
-             (funcall callback chunk))))))))
+             (funcall callback chunk)))))
+     finalize)))
 
-(defun chat--async-text (input callback)
-  "Make a call to ChatGPT on INPUT and call CALLBACK on the resulting text chunks."
+(defun chat--async-text (input callback &optional finalize)
+  "Make a call to ChatGPT on INPUT and call CALLBACK on the resulting text chunks.
+FINALIZE is called when the text is over."
   (chat--async-query
    input
    (lambda (x)
      (funcall callback
               (alist-get 'content
                          (alist-get 'delta
-                                    (car (alist-get 'choices x))))))))
+                                    (car (alist-get 'choices x))))))
+   finalize))
 
 (defun chat-query-insert (input)
   "Insert ChatGPTs response to INPUT."
   (interactive "sChatGPT Input: ")
   (let ((p (point-marker)))
     (chat--async-text
-     input
+     `((("role" . "user") ("content" . ,input)))
      (lambda (chunk)
        (when chunk
          (with-current-buffer (marker-buffer p)
            (goto-char (marker-position p))
            (insert-before-markers-and-inherit chunk)))))))
+
+
+
+(defvar-local chat--entries nil
+  "The location and contents of local entries in a `chat-mode' buffer.")
+
+(defcustom chat-user-prompt "You > "
+  "The prompt facing the user when in `chat-mode'."
+  :type 'string :group 'chat)
+
+(defcustom chat-bot-prompt "Bot > "
+  "The prompt facing the bot when in `chat-mode'."
+  :type 'string :group 'chat)
+
+(defface chat-prompt '((t . (:inherit font-lock-keyword-face)))
+  "The face used for prompts."
+  :group 'chat)
+
+(defface chat-bot '((t . (:inherit font-lock-string-face)))
+  "The face used for ChatGPT's responses.")
+
+(defvar chat-mode-map
+  (let ((m (make-sparse-keymap)))
+    (define-key m (kbd "RET") #'chat-send)
+    (define-key m (kbd "S-RET") #'newline)
+    (define-key m (kbd "<return>") #'chat-send)
+    (define-key m (kbd "S-<return>") #'newline)
+    m)
+  "The mode map for `chat-mode'.")
+
+(defun chat ()
+  "Enter an interactive session with ChatGPT."
+  (interactive)
+  (let ((b (get-buffer-create "ChatGPT")))
+    (pop-to-buffer b)
+    (with-current-buffer b
+      (chat-mode)
+      (chat--insert-prompt chat-user-prompt))))
+
+(defun chat--insert-prompt (prompt)
+  "Insert PROMPT.
+PROMPT must be a recognized `chat-mode' prompt."
+  (insert (propertize prompt
+                      'face 'chat-prompt
+                      'read-only t
+                      'rear-nonsticky t))
+  (setq chat--entries
+        (cons
+         (list (cond
+                ((string= prompt chat-user-prompt) 'user)
+                ((string= prompt chat-bot-prompt) 'bot)
+                (t (error "Unknown prompt: %s" prompt)))
+               (point))
+         chat--entries)))
+
+(defun chat--finish-entry ()
+  "Finish the current entry."
+  (setf (car chat--entries)
+        `(,@(car chat--entries)
+          ,(buffer-substring-no-properties (cadar chat--entries) (point-max))
+          ,(point-max))))
+
+(defun chat-send ()
+  "Send the next command to ChatGPT.
+This works only in a `chat-mode' buffer."
+  (interactive)
+  (unless (derived-mode-p 'chat-mode)
+    (error "`chat-send' should only be called in `chat-mode'"))
+  (unless chat--entries
+    (error "`chat-mode' is not properly set up, missing `chat--entries'"))
+  (let* ((prompt-end (car (last (car-safe chat--entries))))
+         (entry (buffer-substring-no-properties prompt-end (point-max)))
+         (inhibit-read-only t))
+    (if (string-empty-p (string-trim entry))
+        (progn
+          (goto-char (point-max))
+          (newline)
+          (add-text-properties (point-min) (point-max)
+                               '(read-only t rear-nonsticky nil))
+          ;; Mark the whole buffer as read-only. We want to prevent the user from altering
+          ;; our saved positions.
+          (chat--insert-prompt chat-user-prompt))
+      ;; Finalize the entry
+      (chat--finish-entry)
+      ;; Now insert the AI prompt
+      (newline)
+      (chat--insert-prompt chat-bot-prompt)
+      ;; Lock the buffer, ensuring that only we can edit it.
+      (add-text-properties (point-min) (point-max)
+                           '(read-only t rear-nonsticky nil))
+      (chat--send-entries
+       (lambda ()
+         (let ((inhibit-read-only t))
+           (newline)
+           (chat--insert-prompt chat-user-prompt)))))))
+
+(defun chat--send-entries (finish)
+  "Send the current buffers entries as a single request to CHATGPTs.
+FINISH is called after all text has been inserted."
+  (let ((b (current-buffer)))
+    (chat--async-text
+     (mapcar (lambda (entry)
+               `(("role" . ,(pcase (car entry)
+                              ('user "user")
+                              ('bot "assistant")))
+                 ("content" . ,(caddr entry))))
+             (reverse (cdr chat--entries)))
+     (lambda (chunk)
+       (when chunk
+         (with-current-buffer b
+           (goto-char (point-max))
+           (let ((inhibit-read-only t))
+             (insert
+              (propertize chunk
+                          'read-only t
+                          'rear-nonsticky t
+                          'face 'chat-bot))))))
+     (lambda ()
+       (with-current-buffer b
+         (chat--finish-entry)
+         (funcall finish))))))
+
+(define-derived-mode chat-mode nil "Chat"
+  "The major mode used for extended conversations with ChatGPT."
+  :group 'chat)
 
 (provide 'chat)
 ;;; chat.el ends here
