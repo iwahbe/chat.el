@@ -75,7 +75,11 @@ beginning of the new data."
     (chat--async-raw
      input
      (lambda ()
-       (when (search-forward "data: " nil t)
+       (while (and (search-forward "data:" nil t)
+                   (not (string= " [DONE]"
+                                 (buffer-substring-no-properties
+                                  (point)
+                                  (min (point-max) (+ 7 (point)))))))
          (let ((chunk (json-parse-buffer
                        :array-type 'list
                        :object-type 'alist)))
@@ -96,12 +100,13 @@ beginning of the new data."
   "Insert ChatGPTs response to INPUT."
   (interactive "sChatGPT Input: ")
   (let ((p (point-marker)))
-    (chat--async-text input
-                      (lambda (chunk)
-                        (save-excursion
-                          (goto-char (marker-position p))
-                          (switch-to-buffer (marker-buffer p))
-                          (insert-before-markers-and-inherit chunk))))))
+    (chat--async-text
+     input
+     (lambda (chunk)
+       (when chunk
+         (with-current-buffer (marker-buffer p)
+           (goto-char (marker-position p))
+           (insert-before-markers-and-inherit chunk)))))))
 
 (provide 'chat)
 ;;; chat.el ends here
