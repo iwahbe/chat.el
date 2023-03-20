@@ -1,8 +1,22 @@
 ;;; chat.el --- An Emacs facade for ChatGPT  -*- lexical-binding:t -*-
 
+;; Copyright (C) 2023 Ian Wahbe
+
+;; Author: Ian Wahbe
+;; URL: https://github.com/iwahbe/chat.el
+;; Version: 0.1.0
+;; Package-Requires: ((emacs "27.1"))
+
+;;; Commentary:
+
+;; An Emacs package for asynchronous interaction with ChatGPT.
+
+;;; Code:
+
 (require 'json)
 (require 'url)
 (require 'url-http)
+(require 'cl-lib)
 
 (defgroup chat ()
   "Chatting with OpenAI models, such as GPT3."
@@ -34,8 +48,11 @@ If no key is found, error."
   (or chat-api-key
       (and chat-api-env-key (getenv chat-api-env-key))
       (user-error
-       "Could not get OpenAI API key. Either set `chat-api-key' or ensure that \"%s\" is set"
+       "Could not get OpenAI API key.  Either set `chat-api-key' or ensure that \"%s\" is set"
        chat-api-env-key)))
+
+;;; Asynchronous primitives for streaming data from ChatGPT's API
+
 
 (defun chat--async-raw (messages callback finalize)
   "Query ChatGPT with MESSAGES.
@@ -45,12 +62,14 @@ FINALIZE is called after all data has been processed."
   (let* ((url-request-method "POST")
          (url-request-extra-headers `(("Content-Type" . "application/json")
                                       ("Authorization" . ,(concat "Bearer " (chat-get-api-key)))))
-         (url-request-data (json-encode
-                            `(("model" . "gpt-3.5-turbo")
-                              ,@(when chat-max-tokens
-                                  `(("max_tokens" . ,chat-max-tokens)))
-                              ("stream" . t)
-                              ("messages" . ,messages))))
+         (url-request-data (encode-coding-string
+                            (json-encode
+                             `(("model" . "gpt-3.5-turbo")
+                               ,@(when chat-max-tokens
+                                   `(("max_tokens" . ,chat-max-tokens)))
+                               ("stream" . t)
+                               ("messages" . ,messages)))
+                            'utf-8))
          (filter (lambda (filter proc data)
                    (let ((length (funcall filter proc data))
                          (b (process-buffer proc)))
@@ -101,6 +120,26 @@ FINALIZE is called when the text is over."
                                     (car (alist-get 'choices x))))))
    finalize))
 
+;;; Transient interactions based on user input and the region.
+
+
+(defmacro chat--with-query-buffer (insert &rest body)
+  "Run BODY with access temporary query buffer to display the result.
+INSERT is bound to a function that will insert text into the buffer."
+  (declare (indent defun))
+  (let ((s (gensym)))
+    `(let ((,s (get-buffer-create "ChatGPT Query")))
+       (cl-flet ((,insert (text) "Insert text into the query buffer"
+                   (with-current-buffer ,s
+                     (goto-char (point-max))
+                     (let ((inhibit-read-only t))
+                       (insert text)))))
+         (pop-to-buffer ,s)
+         (with-current-buffer ,s
+           (special-mode)
+           (let ((inhibit-read-only t)) (erase-buffer)))
+         ,@body))))
+
 (defun chat-query-user (input &optional insert)
   "Insert ChatGPTs response to INPUT.
 If INSERT is non-nil, the text is inserted into the current buffer."
@@ -117,55 +156,92 @@ If INSERT is non-nil, the text is inserted into the current buffer."
                (goto-char (marker-position p))
                (insert-before-markers-and-inherit chunk))))))
     ;; Otherwise, create a new buffer to display the output
-    (let ((b (get-buffer-create "ChatGPT Query")))
-      (pop-to-buffer b)
-      (with-current-buffer b
-        (erase-buffer)
-        (special-mode)
-        (chat--async-text
-         `((("role" . "user") ("content" . ,input)))
-         (lambda (chunk)
-           (when chunk
-             (let ((inhibit-read-only t)) (insert chunk)))))))))
-
-(defmacro chat--with-query-buffer (&rest body)
-  "Run BODY in a temporary query buffer."
-  (let ((s (gensym)))
-    `(let ((,s (get-buffer-create "ChatGPT Query")))
-       (pop-to-buffer ,s)
-       (with-current-buffer ,s
-         (special-mode)
-         (let ((inhibit-read-only t)) (erase-buffer))
-         ,@body))))
+    (chat--with-query-buffer insert
+      (chat--async-text
+       `((("role" . "user") ("content" . ,input)))
+       (lambda (chunk)
+         (when chunk (insert chunk)))))))
 
 (defun chat-query-region (reg-beg reg-end &optional mode)
   "Apply INPUT to the region bounded by REG-BEG and REG-END.
 MODE determines what is done with the result.
-- If nil, a new buffer is created to hold the output."
+
+- If nil, a new buffer is created to hold the output.
+
+- If mode is 4 (\\[universal-argument]), then `chat-query-region'
+  inserts its contents after point.
+- If mode is 16 (\\[universal-argument] \\[universal-argument]), then `chat-query-region'
+  replaces the region with ChatGPT's response."
   (interactive "r\nP")
   (when mode
     (barf-if-buffer-read-only))
-
-  ;; TODO: Right now, this only works in the commentary mode. We need to add the "insert"
-  ;; and "replace" modes.
-
   (let* ((input (read-string "ChatGPT Input (applied to region): "))
          (contents (buffer-substring-no-properties
-                    reg-beg reg-end)))
-    (chat--with-query-buffer
-     (special-mode)
-     (chat--async-text
-      `((("role" . "user") ("content" . "Apply the next input as context going forward"))
-        (("role" . "user") ("content" . ,contents))
-        (("role" . "user") ("content" . ,input)))
-      (lambda (chunk)
-        (when chunk
-          (let ((inhibit-read-only t)) (insert chunk))))))))
+                    reg-beg reg-end))
+         (messages `((;; ("role" . "user") ("content" . "Apply the next input as context going forward"))
+                      (("role" . "user") ("content" . ,input))
+                      (("role" . "user") ("content" . ,contents))))))
+    (pcase (car-safe mode)
+      ;; Inserting text into a query buffer.
+      ((pred not)
+       (chat--with-query-buffer insert
+        (special-mode)
+        (chat--async-text
+         messages
+         (lambda (chunk) (when chunk (insert chunk))))))
+      ;; Inserting text at point.
+      (4 (let ((p (point-marker)))
+           (chat--async-text
+            messages
+            (lambda (chunk)
+              (when chunk
+                (with-current-buffer (marker-buffer p)
+                  (goto-char (marker-position p))
+                  (insert-before-markers-and-inherit chunk)))))))
+      ;; Replacing the region with the AI's output.
+      (16 (let ((beg (save-excursion (goto-char reg-beg) (point-marker)))
+                (end (save-excursion (goto-char reg-end) (point-marker))))
+            ;; Here, we mark the text to be replaced as such, preventing the user from
+            ;; making pointless edits.
+            (add-text-properties reg-beg reg-end
+                                 '(read-only t face shadow))
+            (chat--async-text
+             messages
+             (lambda (chunk)
+               "Insert CHUNK into the buffer, gradually replacing the previous text."
+               (when chunk
+                 (with-current-buffer (marker-buffer beg)
+                   (let* ((region-insert-end (min (marker-position end)
+                                                  (+ (length chunk)
+                                                     (marker-position beg))))
+                          (region-insert-length (- region-insert-end
+                                                   (marker-position beg))))
+                     (when (>= region-insert-length 0)
+                       ;; When we have room to insert into the current region
+                       (let ((inhibit-read-only t))
+                         ;; Delete the old content, go to the beginning and insert Since
+                         ;; we delete content after `beg' and insert the new content
+                         ;; before `beg', this has the effect of inching `beg' towards
+                         ;; end.
+                         (delete-region beg region-insert-end)
+                         (goto-char beg)
+                         (insert-before-markers-and-inherit (substring chunk 0 region-insert-length))))
+                     (goto-char beg)
+                     ;; Any remaining content is inserted at the beginning. If we have not
+                     ;; yet overwritten the full string, this will be a no-op.
+                     (insert-before-markers-and-inherit (substring chunk region-insert-length))))))
+             (lambda ()
+               "Remove any remaining part of the region to be replaced."
+               (with-current-buffer (marker-buffer beg)
+                 (let ((inhibit-read-only t))
+                   (delete-region  beg end)))))))
+      (_ (user-error "Unknown mode: %s" mode)))))
 
 (defun chat-query-dwim (&optional arg)
   "Query ChatGPT, getting input via a region or with the prompt.
 
-This is not designed for programmatic use."
+This is not designed for programmatic use.  ARG is passed as the
+mode controller to `chat-query-user' and `chat-query-region'."
   (if (region-active-p)
       (chat-query-region (region-beginning)
                          (region-end)
