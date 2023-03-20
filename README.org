@@ -1,24 +1,48 @@
 #+TITLE:  chat.el
 #+AUTHOR: iwahbe
 
-#+BEGIN_SRC
-You > What would you call a major mode dedicated to chatting with an AI. Keep in mind that package names must be unique and should be short.
-Bot > How about "AI-chat" or "AI-conv"? Both are short and easy to remember.
-You > But emacs package names are always shishkabob case
-Bot > Ah, my apologies for misunderstanding! In that case, "ai-chat-mode" or "ai-conv-mode" would be appropriate shishkabob case names for the\
- major mode.
-You > Is there any reason why not just call it `chat-mode`?
-Bot > Yes, that's a valid option as well! However, if you plan to have multiple chat modes in your Emacs setup, like a mode for IRC, Slack, or\
- Twitter, then it might be useful to prefix it with "ai-" for clarity and consistency. That way, you would have "ai-chat-mode" for chatting wi\
-th an AI, "irc-chat-mode" for IRC, "slack-chat-mode" for Slack, and so on. But if you only plan to have one chat mode specifically for AI chat\
-, then just "chat-mode" is perfectly fine.
-You > Emacs already has an `irc` function. Does that change your oppinion?
-Bot > Ah, I see! In that case, "chat-mode" would be a good choice since "irc-mode" already exists in Emacs. If you're building an AI chat feat\
-ure on top of the existing "irc-mode" functionality, you could simply add a chatbot component to that mode and call it "irc-chat-mode" to dist\
-inguish it from the regular "irc-mode". But if you're building a standalone mode dedicated solely to AI chat, "chat-mode" makes more sense to \
-use.
-You > That makes a lot of sense.
-Bot > I'm glad I could help! Let me know if you have any other questions.
-#+END_SRC
+=chat.el= is an pure Emacs package for interacting with OpenAI's ChatGPT models such as GPT3. It interacts directly with the OpenAI API vie Emac's built-in =url= package.
 
-=chat.el= provides a pure Emacs asynchronous interface to ChatGPT.
+It offers several helpful features that enable users to perform, such as writing this README for me. Functionality can be broken down into two basic categories.
+
+*** Transient Queries
+The package offers different ways of querying the ChatGPT model based on user input and region selection, which include:
+
+- =chat-query-user=: Query ChatGPT's response to a user-specified input, either displaying or inserting it.
+- =chat-query-region=: Sends the active region to ChatGPT for responses relevant to the content.
+- =chat-query-dwim=: A prompt for querying ChatGPT prompts users to either specify a region of text or ask for machine learning recommendations based on a prompt.
+
+*** Interactive ChatGPT conversation
+A =chat-mode= allows users to communicate with the ChatGPT model in a "conversation-like" format with prompts. To start an interactive session, run =chat=.
+
+The package also supports =custom.el=, facilitating configuration of API keys and user-specific settings.
+
+** Configuration
+
+In the configuration section, =chat-api-env-key= set the environmental variable used to look up an API key if not specified, while =chat-api-key= sets the OpenAI API key directly..
+
+- =chat-max-tokens= sets the maximum number of tokens for ChatGPT to return for a single request.
+
+- =chat-system-prompt= sets the system prompt given to all ChatGPT requests.
+
+- =chat-user-prompt= sets the text prompt for by the user when in `chat-mode`. Defaults to ="You > "=.
+
+- =chat-bot-prompt= sets the prompt faced by the AI in `chat-mode`. Defaults to ="Bot > "=.
+
+** Installation
+
+To install =chat.el=, follow these simple steps:
+
+1. Download "chat.el" file to your machine.
+
+2. In your Emacs configuration file, add this line:
+
+   #+BEGIN_SRC emacs-lisp
+         (add-to-list 'load-path "/path/to/chat.el/directory")
+   #+END_SRC
+
+3. Evaluating `(require 'chat)` in emacs will load the package.
+
+4. If you want to give a custom configuration, add your configuration to your emacs configuration file.
+
+To configure this package, customize =chat-mode= to control the Chat GPT interaction behavior.

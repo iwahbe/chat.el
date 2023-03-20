@@ -205,10 +205,10 @@ then the object to run the instruction on. The command is: " input)))
       ;; Inserting text into a query buffer.
       ((pred not)
        (chat--with-query-buffer insert
-        (special-mode)
-        (chat--async-text
-         messages
-         (lambda (chunk) (when chunk (insert chunk))))))
+         (special-mode)
+         (chat--async-text
+          messages
+          (lambda (chunk) (when chunk (insert chunk))))))
       ;; Inserting text at point.
       (4 (let ((p (point-marker)))
            (chat--async-text
@@ -299,11 +299,14 @@ mode controller to `chat-query-user' and `chat-query-region'."
     m)
   "The mode map for `chat-mode'.")
 
-(defun chat ()
-  "Enter an interactive session with ChatGPT."
-  (interactive)
+(defun chat (&optional arg)
+  "Enter an interactive session with ChatGPT.
+If ARG is non-nil, switch to a new buffer instead of popping to a new buffer."
+  (interactive "P")
   (let ((b (get-buffer-create "ChatGPT")))
-    (pop-to-buffer b)
+    (if arg
+        (switch-to-buffer b)
+      (pop-to-buffer b))
     (with-current-buffer b
       (chat-mode)
       (chat--insert-prompt chat-user-prompt))))
@@ -339,6 +342,8 @@ This works only in a `chat-mode' buffer."
     (error "`chat-send' should only be called in `chat-mode'"))
   (unless chat--entries
     (error "`chat-mode' is not properly set up, missing `chat--entries'"))
+  (when (eq 'bot (caar chat--entries))
+    (user-error "Waiting on the bot to finish speaking."))
   (let* ((prompt-end (car (last (car-safe chat--entries))))
          (entry (buffer-substring-no-properties prompt-end (point-max)))
          (inhibit-read-only t))
