@@ -9,7 +9,26 @@
 
 ;;; Commentary:
 
-;; An Emacs package for asynchronous interaction with ChatGPT.
+;; This is a package `chat.el` for asynchronous interaction with OpenAI's ChatGPT models,
+;; such as GPT3, in Emacs.
+
+;; The package provides several features that include:
+
+;; ### Transient interactions based on user input and the region.
+;; - `chat-query-user`: Insert ChatGPT's response to a user-specified input.
+;; - `chat-query-region`: Query ChatGPT and replace/insert ChatGPT's response as indicated by given parameters
+;; - `chat-query-dwim`: A prompt for querying ChatGPT, determines whether the user would like to query by region or prompt.
+
+;; ### Interactive ChatGPT conversation: `chat-mode`.
+;; - `chat-send`: Allows chat with the AI in a "conversation-like" way
+
+;; ### Public functions
+;; - `chat-send`: An interactive function for sending input to ChatGPT
+;; - `chat-query-region`: Send a selected region to ChatGPT for responses
+;; - `chat-query-user`: Send user-input to ChatGPT for responses
+;; - `chat`: An interactive session for chatting with a ChatGPT agent.
+
+;; This package also has `custom.el` support for configuring API keys and other user-specific settings.
 
 ;;; Code:
 
@@ -178,9 +197,10 @@ MODE determines what is done with the result.
   (let* ((input (read-string "ChatGPT Input (applied to region): "))
          (contents (buffer-substring-no-properties
                     reg-beg reg-end))
-         (messages `((;; ("role" . "user") ("content" . "Apply the next input as context going forward"))
-                      (("role" . "user") ("content" . ,input))
-                      (("role" . "user") ("content" . ,contents))))))
+         (messages `((("role" . "user") ("content" . ,(concat "I'm going to give an instruction, \
+then the object to run the instruction on. The command is: " input)))
+                     (("role" . "assistant") ("content" . "What text should I perform the instruction on?"))
+                     (("role" . "user") ("content" . ,contents)))))
     (pcase (car-safe mode)
       ;; Inserting text into a query buffer.
       ((pred not)
