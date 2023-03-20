@@ -101,19 +101,80 @@ FINALIZE is called when the text is over."
                                     (car (alist-get 'choices x))))))
    finalize))
 
-(defun chat-query-insert (input)
-  "Insert ChatGPTs response to INPUT."
-  (interactive "sChatGPT Input: ")
-  (let ((p (point-marker)))
-    (chat--async-text
-     `((("role" . "user") ("content" . ,input)))
-     (lambda (chunk)
-       (when chunk
-         (with-current-buffer (marker-buffer p)
-           (goto-char (marker-position p))
-           (insert-before-markers-and-inherit chunk)))))))
+(defun chat-query-user (input &optional insert)
+  "Insert ChatGPTs response to INPUT.
+If INSERT is non-nil, the text is inserted into the current buffer."
+  (interactive "sChatGPT Input: \nP")
+  (if insert
+      ;; If we are inserting, we need to get a reference to where the point is now.
+      (let ((p (point-marker)))
+        (barf-if-buffer-read-only)
+        (chat--async-text
+         `((("role" . "user") ("content" . ,input)))
+         (lambda (chunk)
+           (when chunk
+             (with-current-buffer (marker-buffer p)
+               (goto-char (marker-position p))
+               (insert-before-markers-and-inherit chunk))))))
+    ;; Otherwise, create a new buffer to display the output
+    (let ((b (get-buffer-create "ChatGPT Query")))
+      (pop-to-buffer b)
+      (with-current-buffer b
+        (erase-buffer)
+        (special-mode)
+        (chat--async-text
+         `((("role" . "user") ("content" . ,input)))
+         (lambda (chunk)
+           (when chunk
+             (let ((inhibit-read-only t)) (insert chunk)))))))))
+
+(defmacro chat--with-query-buffer (&rest body)
+  "Run BODY in a temporary query buffer."
+  (let ((s (gensym)))
+    `(let ((,s (get-buffer-create "ChatGPT Query")))
+       (pop-to-buffer ,s)
+       (with-current-buffer ,s
+         (special-mode)
+         (let ((inhibit-read-only t)) (erase-buffer))
+         ,@body))))
+
+(defun chat-query-region (reg-beg reg-end &optional mode)
+  "Apply INPUT to the region bounded by REG-BEG and REG-END.
+MODE determines what is done with the result.
+- If nil, a new buffer is created to hold the output."
+  (interactive "r\nP")
+  (when mode
+    (barf-if-buffer-read-only))
+
+  ;; TODO: Right now, this only works in the commentary mode. We need to add the "insert"
+  ;; and "replace" modes.
+
+  (let* ((input (read-string "ChatGPT Input (applied to region): "))
+         (contents (buffer-substring-no-properties
+                    reg-beg reg-end)))
+    (chat--with-query-buffer
+     (special-mode)
+     (chat--async-text
+      `((("role" . "user") ("content" . "Apply the next input as context going forward"))
+        (("role" . "user") ("content" . ,contents))
+        (("role" . "user") ("content" . ,input)))
+      (lambda (chunk)
+        (when chunk
+          (let ((inhibit-read-only t)) (insert chunk))))))))
+
+(defun chat-query-dwim (&optional arg)
+  "Query ChatGPT, getting input via a region or with the prompt.
+
+This is not designed for programmatic use."
+  (if (region-active-p)
+      (chat-query-region (region-beginning)
+                         (region-end)
+                         arg)
+    (funcall-interactively (chat-query-user arg))))
 
 
+;;; Interactive ChatGPT conversation: `chat-mode'.
+
 
 (defvar-local chat--entries nil
   "The location and contents of local entries in a `chat-mode' buffer.")
@@ -152,7 +213,7 @@ FINALIZE is called when the text is over."
       (chat--insert-prompt chat-user-prompt))))
 
 (defun chat--insert-prompt (prompt)
-  "Insert PROMPT.
+  "Insert a new PROMPT, ending the previous entry.
 PROMPT must be a recognized `chat-mode' prompt."
   (insert (propertize prompt
                       'face 'chat-prompt
