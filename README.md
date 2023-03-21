@@ -30,7 +30,11 @@ In the configuration section, `chat-api-env-key` set the environmental variable 
 
 - `chat-bot-prompt` sets the prompt faced by the AI in `chat-mode`. Defaults to `"Bot > "`.
 
-** Installation
+- `chat-tempature` sets the `tempature` parameter for requests. Defaults to `nil`.
+
+- `chat-top-p` sets the `top_p` parameter for requests. Defaults to `nil`.
+
+## Installation
 
 To install `chat.el`, follow these simple steps:
 
