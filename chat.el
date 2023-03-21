@@ -128,13 +128,39 @@ FINALIZE is called after all data has been processed."
                          (funcall callback))
                        length)))))
     (advice-add #'url-http-generic-filter :around filter)
-    (url-retrieve "https://api.openai.com/v1/chat/completions"
-                  (lambda (status)
-                    (advice-remove #'url-http-generic-filter filter)
-                    (when-let (err (plist-get status :error))
-                      (error "Failed to get response: %s" err))
-                    (when finalize
-                      (funcall finalize))))))
+    (unless (url-retrieve "https://api.openai.com/v1/chat/completions"
+                          (lambda (status)
+                            (advice-remove #'url-http-generic-filter filter)
+                            (when finalize
+                              (funcall finalize))
+                            (when-let (err (plist-get status :error))
+                              ;; We got an error. Lets try to parse the buffer and surface
+                              ;; a good error response
+                              (error "%s: %s" (cdr err)
+                                     (condition-case nil
+                                         (progn
+                                           (goto-char (point-min))
+                                           (search-forward "\n\n")
+                                           (let* ((parsed (json-parse-buffer
+                                                           :array-type 'list
+                                                           :object-type 'alist))
+                                                  (e (alist-get 'error parsed)))
+                                             (or (alist-get 'message e)
+                                                 (error "Could not get message"))))
+                                       ;; Something went wrong getting the error message.
+                                       ;; We will just show the whole buffer in the error
+                                       ;; message.
+                                       (error (buffer-substring (point-min) (point-max))))))))
+      ;; From the documentation of `url-retrieve':
+      ;;
+      ;;   Return the buffer URL will load into, or nil if the process has already
+      ;;   completed (i.e. URL was a mailto URL or similar; in this case the callback is
+      ;;   not called).
+      ;;
+      ;; We need to make sure that `finalize' is always called.
+      (advice-remove #'url-http-generic-filter filter)
+      (when finalize
+        (funcall finalize)))))
 
 (defun chat--async-query (messages callback finalize)
   "Apply CALLBACK to each data block returned from calling ChatGPT on MESSAGES.
