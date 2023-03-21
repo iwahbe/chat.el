@@ -58,6 +58,32 @@ A nil value translates to no upper bound in the number of tokens."
   "The system prompt given to all ChatGPT requests."
   :type 'string :group 'chat)
 
+(defcustom chat-temperature nil
+  "Set the temperature value sent to ChatGPT.
+A nil value results in the default value being used.
+The OpenAI reference docs for temperature say:
+
+  What sampling temperature to use, between 0 and 2. Higher values
+  like 0.8 will make the output more random, while lower values
+  like 0.2 will make it more focused and deterministic.
+
+  We generally recommend altering this or top_p but not both."
+  :type 'float :group 'chat)
+
+(defcustom chat-top-p nil
+  "Set the top_p value sent to ChatGPT.
+A nil value results in the default value being used.
+The OpenAI reference docs for top_p say:
+
+  An alternative to sampling with temperature, called nucleus
+  sampling, where the model considers the results of the tokens
+  with top_p probability mass.  So 0.1 means only the tokens
+  comprising the top 10% probability mass are considered.
+
+  We generally recommend altering this or temperature but not
+  both."
+  :type 'float :group 'chat)
+
 (defvar chat--input-history nil
   "The variable that stores input history.")
 
@@ -86,6 +112,10 @@ FINALIZE is called after all data has been processed."
                              `(("model" . "gpt-3.5-turbo")
                                ,@(when chat-max-tokens
                                    `(("max_tokens" . ,chat-max-tokens)))
+                               ,@(when chat-temperature
+                                   `(("temperature" . ,chat-temperature)))
+                               ,@(when chat-top-p
+                                   `(("top_p" . ,chat-top-p)))
                                ("stream" . t)
                                ("messages" . ,messages)))
                             'utf-8))
