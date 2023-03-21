@@ -150,7 +150,8 @@ FINALIZE is called after all data has been processed."
                                        ;; Something went wrong getting the error message.
                                        ;; We will just show the whole buffer in the error
                                        ;; message.
-                                       (error (buffer-substring (point-min) (point-max))))))))
+                                       (error (buffer-substring (point-min) (point-max))))))
+                            (kill-buffer)))
       ;; From the documentation of `url-retrieve':
       ;;
       ;;   Return the buffer URL will load into, or nil if the process has already
