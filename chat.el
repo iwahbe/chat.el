@@ -84,6 +84,34 @@ The OpenAI reference docs for top_p say:
   both."
   :type 'float :group 'chat)
 
+(defcustom chat-model "gpt-3.5-turbo"
+  "The chat model used during conversations.
+
+The API token provided must have access to the model used."
+  :type '(choice
+    (const "gpt-4")
+    (const "gpt-4-0314")
+    (const "gpt-4-32k")
+    (const "gpt-4-32k-0314")
+    (const "gpt-3.5-turbo")
+    (const "gpt-3.5-turbo-0301"))
+  :group 'chat)
+
+(defcustom chat-user-prompt "You > "
+  "The prompt facing the user when in `chat-mode'."
+  :type 'string :group 'chat)
+
+(defcustom chat-bot-prompt "Bot > "
+  "The prompt facing the bot when in `chat-mode'."
+  :type 'string :group 'chat)
+
+(defface chat-prompt '((t . (:inherit font-lock-keyword-face)))
+  "The face used for prompts."
+  :group 'chat)
+
+(defface chat-bot '((t . (:inherit font-lock-string-face)))
+  "The face used for ChatGPT's responses.")
+
 (defvar chat--input-history nil
   "The variable that stores input history.")
 
@@ -109,7 +137,7 @@ FINALIZE is called after all data has been processed."
                                       ("Authorization" . ,(concat "Bearer " (chat-get-api-key)))))
          (url-request-data (encode-coding-string
                             (json-encode
-                             `(("model" . "gpt-3.5-turbo")
+                             `(("model" . ,chat-model)
                                ,@(when chat-max-tokens
                                    `(("max_tokens" . ,chat-max-tokens)))
                                ,@(when chat-temperature
@@ -199,22 +227,40 @@ FINALIZE is called when the text is over."
 ;;; Transient interactions based on user input and the region.
 
 
-(defmacro chat--with-query-buffer (insert &rest body)
+(defmacro chat--with-query-buffer (input insert &rest body)
   "Run BODY with access temporary query buffer to display the result.
-INSERT is bound to a function that will insert text into the buffer."
+INSERT is bound to a function that will insert text into the buffer.
+INPUT is displayed to the user as the model's input."
   (declare (indent defun))
   (let ((s (gensym)))
     `(let ((,s (get-buffer-create "ChatGPT Query")))
+       (pop-to-buffer ,s)
+       (with-current-buffer ,s
+         (chat-query-mode)
+         (let ((inhibit-read-only t))
+           (erase-buffer)
+           (chat--query-mode-insert-heading
+            (setq chat--query-input ,input))))
        (cl-flet ((,insert (text) "Insert text into the query buffer"
                    (with-current-buffer ,s
                      (goto-char (point-max))
                      (let ((inhibit-read-only t))
                        (insert text)))))
-         (pop-to-buffer ,s)
-         (with-current-buffer ,s
-           (special-mode)
-           (let ((inhibit-read-only t)) (erase-buffer)))
          ,@body))))
+
+(defvar-local chat--query-input nil
+  "The input to the current query.")
+
+(defun chat--query-mode-insert-heading (input)
+  "Insert the standard heading for `chat-query-mode'.
+Display INPUT as the model's Input."
+
+(insert (substitute-command-keys
+           (propertize
+            "To reply, press \\[chat-query-reply].\n\n"
+            'face 'shadow)))
+  (insert input "\n\n")
+  (insert (propertize "---" 'face 'shadow) "\n\n"))
 
 (defun chat-query-user (input &optional insert)
   "Insert ChatGPTs response to INPUT.
@@ -232,7 +278,7 @@ If INSERT is non-nil, the text is inserted into the current buffer."
                (goto-char (marker-position p))
                (insert-before-markers-and-inherit chunk))))))
     ;; Otherwise, create a new buffer to display the output
-    (chat--with-query-buffer insert
+    (chat--with-query-buffer input insert
       (chat--async-text
        `((("role" . "user") ("content" . ,input)))
        (lambda (chunk)
@@ -261,7 +307,7 @@ then the object to run the instruction on. The command is: " input)))
     (pcase (car-safe mode)
       ;; Inserting text into a query buffer.
       ((pred not)
-       (chat--with-query-buffer insert
+       (chat--with-query-buffer input insert
          (special-mode)
          (chat--async-text
           messages
@@ -325,27 +371,50 @@ mode controller to `chat-query-user' and `chat-query-region'."
                          arg)
     (funcall-interactively (chat-query-user arg))))
 
+(defvar chat-query-mode-map
+  (let ((m (make-sparse-keymap)))
+    (define-key m (kbd "r") #'chat-query-reply)
+    m)
+  "The key map for `chat-query-mode'.")
+
+(defun chat-query-reply ()
+  "Reply the currently displayed query."
+  (interactive)
+  (let ((input chat--query-input)
+        (response (progn
+                    (goto-char (point-min))
+                    (search-forward (concat chat--query-input "\n\n---\n\n"))
+                    (buffer-substring-no-properties (point) (point-max)))))
+    (chat-mode)
+    (read-only-mode -1)
+    (erase-buffer)
+    ;; Now that we have entered chat mode, we fast forward the conversation to catch up.
+    ;; We first insert the user's original prompt:
+    (chat--insert-prompt chat-user-prompt)
+    (insert input)
+    (chat--finish-entry)
+    (newline)
+    ;; Then we insert the chat-bot's response.
+    (chat--insert-prompt chat-bot-prompt)
+    (insert (propertize response 'face 'chat-bot))
+    (chat--finish-entry)
+    (newline)
+    (let ((p (point)))
+      (chat--insert-prompt chat-user-prompt)
+      (add-text-properties (point-min) p
+                           '(read-only t rear-nonsticky nil)))))
+
+
+(define-derived-mode chat-query-mode special-mode "Chat"
+  "The major mode for viewing a ChatGPT query."
+  :group 'chat
+  :interactive nil)
 
 ;;; Interactive ChatGPT conversation: `chat-mode'.
 
 
 (defvar-local chat--entries nil
   "The location and contents of local entries in a `chat-mode' buffer.")
-
-(defcustom chat-user-prompt "You > "
-  "The prompt facing the user when in `chat-mode'."
-  :type 'string :group 'chat)
-
-(defcustom chat-bot-prompt "Bot > "
-  "The prompt facing the bot when in `chat-mode'."
-  :type 'string :group 'chat)
-
-(defface chat-prompt '((t . (:inherit font-lock-keyword-face)))
-  "The face used for prompts."
-  :group 'chat)
-
-(defface chat-bot '((t . (:inherit font-lock-string-face)))
-  "The face used for ChatGPT's responses.")
 
 (defvar chat-mode-map
   (let ((m (make-sparse-keymap)))
@@ -455,7 +524,8 @@ FINISH is called after all text has been inserted."
 
 (define-derived-mode chat-mode nil "Chat"
   "The major mode used for extended conversations with ChatGPT."
-  :group 'chat)
+  :group 'chat
+  :interactive nil)
 
 (provide 'chat)
 ;;; chat.el ends here
