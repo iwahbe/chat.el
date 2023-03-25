@@ -227,35 +227,60 @@ FINALIZE is called when the text is over."
 ;;; Transient interactions based on user input and the region.
 
 
-(defmacro chat--with-query-buffer (input insert &rest body)
+(defmacro chat--with-query-session (input insert finish &rest body)
   "Run BODY with access temporary query buffer to display the result.
 INSERT is bound to a function that will insert text into the buffer.
-INPUT is displayed to the user as the model's input."
+INPUT is displayed to the user as the model's input.
+FINISH is bound to a function symbol to be called after the chat session is
+over."
   (declare (indent defun))
   (let ((s (gensym)))
     `(let ((,s (get-buffer-create "ChatGPT Query")))
        (pop-to-buffer ,s)
        (with-current-buffer ,s
          (chat-query-mode)
+         (setq chat--query-in-flight t)
          (let ((inhibit-read-only t))
            (erase-buffer)
            (chat--query-mode-insert-heading
             (setq chat--query-input ,input))))
-       (cl-flet ((,insert (text) "Insert text into the query buffer"
+       ;; We expect `insert' to be lexically called directly from `body'. Probably via a
+       ;; lambda, but with a direct lexical relationship.
+       (cl-flet ((,insert (text)
+                   "Insert text into the query buffer."
                    (with-current-buffer ,s
                      (goto-char (point-max))
                      (let ((inhibit-read-only t))
-                       (insert text)))))
-         ,@body))))
+                       (funcall
+                        (if (derived-mode-p 'chat-mode)
+                            #'chat--insert-as-bot
+                          #'insert)
+                        text)))))
+         ;; We expect `finish' to be referenced by symbol, so we make it a self-quoting
+         ;; lambda instead of binding to a lexical symbol (which doesn't work as
+         ;; expected).
+         (let ((,finish (lambda ()
+                          "Finish the current query.
+Here we mark the query as done and call the after-query function."
+                          (with-current-buffer ,s
+                            (when chat--query-finish-function
+                              (funcall chat--query-finish-function))
+                            (setq chat--query-in-flight nil)))))
+           ,@body)))))
 
 (defvar-local chat--query-input nil
   "The input to the current query.")
 
+(defvar-local chat--query-in-flight nil
+  "If there is a query currently in flight.")
+
+(defvar-local chat--query-finish-function nil
+  "The function to run after the current in-flight query is done is finished.")
+
 (defun chat--query-mode-insert-heading (input)
   "Insert the standard heading for `chat-query-mode'.
 Display INPUT as the model's Input."
-
-(insert (substitute-command-keys
+  (insert (substitute-command-keys
            (propertize
             "To reply, press \\[chat-query-reply].\n\n"
             'face 'shadow)))
@@ -278,11 +303,12 @@ If INSERT is non-nil, the text is inserted into the current buffer."
                (goto-char (marker-position p))
                (insert-before-markers-and-inherit chunk))))))
     ;; Otherwise, create a new buffer to display the output
-    (chat--with-query-buffer input insert
+    (chat--with-query-session input insert finish
       (chat--async-text
        `((("role" . "user") ("content" . ,input)))
        (lambda (chunk)
-         (when chunk (insert chunk)))))))
+         (when chunk (insert chunk)))
+       finish))))
 
 (defun chat-query-region (reg-beg reg-end &optional mode)
   "Apply INPUT to the region bounded by REG-BEG and REG-END.
@@ -307,11 +333,11 @@ then the object to run the instruction on. The command is: " input)))
     (pcase (car-safe mode)
       ;; Inserting text into a query buffer.
       ((pred not)
-       (chat--with-query-buffer input insert
-         (special-mode)
+       (chat--with-query-session (concat input "\n\n```\n" contents "\n```") insert finish
          (chat--async-text
           messages
-          (lambda (chunk) (when chunk (insert chunk))))))
+          (lambda (chunk) (when chunk (insert chunk)))
+          finish)))
       ;; Inserting text at point.
       (4 (let ((p (point-marker)))
            (chat--async-text
@@ -384,7 +410,18 @@ mode controller to `chat-query-user' and `chat-query-region'."
         (response (progn
                     (goto-char (point-min))
                     (search-forward (concat chat--query-input "\n\n---\n\n"))
-                    (buffer-substring-no-properties (point) (point-max)))))
+                    (buffer-substring-no-properties (point) (point-max))))
+        ;; We bind `in-flight' early to prevent it being reset during the major mode
+        ;; change.
+        (in-flight chat--query-in-flight)
+        (finish (lambda ()
+                  "Finish the chat bots entry, then enable the reply."
+                  (chat--finish-entry)
+                  (newline)
+                  (let ((p (point)))
+                    (chat--insert-prompt chat-user-prompt)
+                    (add-text-properties (point-min) p
+                                         '(read-only t rear-nonsticky nil))))))
     (chat-mode)
     (read-only-mode -1)
     (erase-buffer)
@@ -397,18 +434,16 @@ mode controller to `chat-query-user' and `chat-query-region'."
     ;; Then we insert the chat-bot's response.
     (chat--insert-prompt chat-bot-prompt)
     (insert (propertize response 'face 'chat-bot))
-    (chat--finish-entry)
-    (newline)
-    (let ((p (point)))
-      (chat--insert-prompt chat-user-prompt)
-      (add-text-properties (point-min) p
-                           '(read-only t rear-nonsticky nil)))))
+    (if in-flight
+        (setq chat--query-finish-function finish)
+      (funcall finish))))
 
 
 (define-derived-mode chat-query-mode special-mode "Chat"
   "The major mode for viewing a ChatGPT query."
   :group 'chat
-  :interactive nil)
+  :interactive nil
+  (visual-line-mode +1))
 
 ;;; Interactive ChatGPT conversation: `chat-mode'.
 
@@ -496,6 +531,14 @@ This works only in a `chat-mode' buffer."
            (newline)
            (chat--insert-prompt chat-user-prompt)))))))
 
+(defun chat--insert-as-bot (text)
+  "Insert TEXT as the bot in `chat-mode'."
+  (insert
+   (propertize text
+               'read-only t
+               'rear-nonsticky t
+               'face 'chat-bot)))
+
 (defun chat--send-entries (finish)
   "Send the current buffers entries as a single request to CHATGPTs.
 FINISH is called after all text has been inserted."
@@ -512,11 +555,7 @@ FINISH is called after all text has been inserted."
          (with-current-buffer b
            (goto-char (point-max))
            (let ((inhibit-read-only t))
-             (insert
-              (propertize chunk
-                          'read-only t
-                          'rear-nonsticky t
-                          'face 'chat-bot))))))
+             (chat--insert-as-bot chunk)))))
      (lambda ()
        (with-current-buffer b
          (chat--finish-entry)
