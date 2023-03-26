@@ -1,4 +1,4 @@
-;;; chat.el --- An Emacs facade for ChatGPT  -*- lexical-binding:t -*-
+;;; chat.el --- A facade for ChatGPT  -*- lexical-binding:t -*-
 
 ;; Copyright (C) 2023 Ian Wahbe
 
@@ -213,7 +213,7 @@ FINALIZE is called when the query finishes."
      finalize)))
 
 (defun chat--async-text (input callback &optional finalize)
-  "Make a call to ChatGPT on INPUT and call CALLBACK on the resulting text chunks.
+  "Call ChatGPT on INPUT and call CALLBACK on the resulting text chunks.
 FINALIZE is called when the text is over."
   (chat--async-query
    input
@@ -504,7 +504,7 @@ This works only in a `chat-mode' buffer."
   (unless chat--entries
     (error "`chat-mode' is not properly set up, missing `chat--entries'"))
   (when (eq 'bot (caar chat--entries))
-    (user-error "Waiting on the bot to finish speaking."))
+    (user-error "Waiting on the bot to finish speaking"))
   (let* ((prompt-end (car (last (car-safe chat--entries))))
          (entry (buffer-substring-no-properties prompt-end (point-max)))
          (inhibit-read-only t))
