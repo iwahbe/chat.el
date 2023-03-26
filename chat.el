@@ -213,7 +213,7 @@ FINALIZE is called when the query finishes."
      finalize)))
 
 (defun chat--async-text (input callback &optional finalize)
-  "Make a call to ChatGPT on INPUT and call CALLBACK on the resulting text chunks.
+  "Call ChatGPT on INPUT and call CALLBACK on the resulting text chunks.
 FINALIZE is called when the text is over."
   (chat--async-query
    input
