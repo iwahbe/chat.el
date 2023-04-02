@@ -287,6 +287,7 @@ Display INPUT as the model's Input."
   (insert input "\n\n")
   (insert (propertize "---" 'face 'shadow) "\n\n"))
 
+;;;###autoload
 (defun chat-query-user (input &optional insert)
   "Insert ChatGPTs response to INPUT.
 If INSERT is non-nil, the text is inserted into the current buffer."
@@ -310,6 +311,7 @@ If INSERT is non-nil, the text is inserted into the current buffer."
          (when chunk (insert chunk)))
        finish))))
 
+;;;###autoload
 (defun chat-query-region (reg-beg reg-end &optional mode)
   "Apply INPUT to the region bounded by REG-BEG and REG-END.
 MODE determines what is done with the result.
@@ -386,16 +388,18 @@ then the object to run the instruction on. The command is: " input)))
                    (delete-region  beg end)))))))
       (_ (user-error "Unknown mode: %s" mode)))))
 
+;;;###autoload
 (defun chat-query-dwim (&optional arg)
   "Query ChatGPT, getting input via a region or with the prompt.
 
 This is not designed for programmatic use.  ARG is passed as the
 mode controller to `chat-query-user' and `chat-query-region'."
+  (interactive)
   (if (region-active-p)
       (chat-query-region (region-beginning)
                          (region-end)
                          arg)
-    (funcall-interactively (chat-query-user arg))))
+    (call-interactively #'chat-query-user)))
 
 (defvar chat-query-mode-map
   (let ((m (make-sparse-keymap)))
@@ -460,6 +464,7 @@ mode controller to `chat-query-user' and `chat-query-region'."
     m)
   "The mode map for `chat-mode'.")
 
+;;;###autoload
 (defun chat (&optional arg)
   "Enter an interactive session with ChatGPT.
 If ARG is non-nil, switch to a new buffer instead of popping to a new buffer."
