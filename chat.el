@@ -554,7 +554,7 @@ FINISH is called after all text has been inserted."
                               ('user "user")
                               ('bot "assistant")))
                  ("content" . ,(caddr entry))))
-             (reverse (cdr chat--entries)))
+             (reverse (cdr (seq-filter #'caddr chat--entries))))
      (lambda (chunk)
        (when chunk
          (with-current-buffer b
