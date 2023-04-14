@@ -127,12 +127,13 @@ If no key is found, error."
 ;;; Asynchronous primitives for streaming data from ChatGPT's API
 
 
-(defun chat--async-raw (messages callback finalize)
+(defun chat--async-raw (raw-messages callback finalize)
   "Query ChatGPT with MESSAGES.
 CALLBACK is called in the receiving buffer with POINT at the
 beginning of the new data.
 FINALIZE is called after all data has been processed."
-  (let* ((url-request-method "POST")
+  (let* ((messages (seq-filter (lambda (item) (cdr (assoc "content" item))) raw-messages))
+         (url-request-method "POST")
          (url-request-extra-headers `(("Content-Type" . "application/json")
                                       ("Authorization" . ,(concat "Bearer " (chat-get-api-key)))))
          (url-request-data (encode-coding-string
@@ -554,7 +555,7 @@ FINISH is called after all text has been inserted."
                               ('user "user")
                               ('bot "assistant")))
                  ("content" . ,(caddr entry))))
-             (reverse (cdr (seq-filter #'caddr chat--entries))))
+             (reverse (cdr chat--entries)))
      (lambda (chunk)
        (when chunk
          (with-current-buffer b
