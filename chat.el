@@ -89,12 +89,13 @@ The OpenAI reference docs for top_p say:
 
 The API token provided must have access to the model used."
   :type '(choice
-    (const "gpt-4")
-    (const "gpt-4-0314")
-    (const "gpt-4-32k")
-    (const "gpt-4-32k-0314")
-    (const "gpt-3.5-turbo")
-    (const "gpt-3.5-turbo-0301"))
+          (const "gpt-4o")
+          (const "gpt-4")
+          (const "gpt-4-0314")
+          (const "gpt-4-32k")
+          (const "gpt-4-32k-0314")
+          (const "gpt-3.5-turbo")
+          (const "gpt-3.5-turbo-0301"))
   :group 'chat)
 
 (defcustom chat-user-prompt "You > "
