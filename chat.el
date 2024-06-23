@@ -312,6 +312,19 @@ If INSERT is non-nil, the text is inserted into the current buffer."
          (when chunk (insert chunk)))
        finish))))
 
+(defconst chat--query-region-default-prefix
+  "I'm going to give an instruction, then the object to run the instruction on.")
+
+(defconst chat--query-region-insert-prefix
+  "I'm going to give an instruction, then the object to run the instruction on. \
+Your response will be inserted directly after the text\
+you have been sent. DO NOT insert any commentary around your reply.")
+
+(defconst chat--query-region-replace-prefix
+  "I'm going to give an instruction, \
+then the object to run the instruction on. Your response will be used to directly replace the text\
+you have been sent. DO NOT insert any commentary around your reply.")
+
 ;;;###autoload
 (defun chat-query-region (reg-beg reg-end &optional mode)
   "Apply INPUT to the region bounded by REG-BEG and REG-END.
@@ -329,8 +342,12 @@ MODE determines what is done with the result.
   (let* ((input (read-string "ChatGPT Input (applied to region): "))
          (contents (buffer-substring-no-properties
                     reg-beg reg-end))
-         (messages `((("role" . "user") ("content" . ,(concat "I'm going to give an instruction, \
-then the object to run the instruction on. The command is: " input)))
+         (messages `((("role" . "user") ("content" . ,(concat
+                                                       (pcase (car-safe mode)
+                                                         ((pred not) chat--query-region-default-prefix)
+                                                         (4 chat--query-region-insert-prefix)
+                                                         (16 chat--query-region-replace-prefix))
+                                                       "\nThe command is: " input)))
                      (("role" . "assistant") ("content" . "What text should I perform the instruction on?"))
                      (("role" . "user") ("content" . ,contents)))))
     (pcase (car-safe mode)
@@ -395,7 +412,7 @@ then the object to run the instruction on. The command is: " input)))
 
 This is not designed for programmatic use.  ARG is passed as the
 mode controller to `chat-query-user' and `chat-query-region'."
-  (interactive)
+  (interactive "P")
   (if (region-active-p)
       (chat-query-region (region-beginning)
                          (region-end)
