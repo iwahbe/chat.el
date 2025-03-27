@@ -49,12 +49,16 @@
   "The API Key used to query api.openapi.com."
   :type 'string :group 'chat)
 
-(defcustom chat-max-tokens 500
+(defcustom chat-max-tokens 2000
   "The maximum number of tokens for ChatGPT to return for a single request.
 A nil value translates to no upper bound in the number of tokens."
   :type 'number :group 'chat)
 
-(defcustom chat-system-prompt "You are a helpful AI Assistant embedded into Emacs."
+(defcustom chat-system-prompt "You are a helpful AI Assistant embedded into Emacs.
+
+You should assume that you are working with a smart and knowledgeable
+developer. Explanations should focus on the non-obvious and be brief and
+information dense. Brevity is key."
   "The system prompt given to all ChatGPT requests."
   :type 'string :group 'chat)
 
